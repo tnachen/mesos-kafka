@@ -146,7 +146,11 @@ class BrokerTest extends MesosTestCase {
 
   @Test
   def shouldStop {
+    assertFalse(broker.shouldStop)
+
+    broker.task = new Broker.Task()
     assertTrue(broker.shouldStop)
+
     broker.active = true
     assertFalse(broker.shouldStop)
   }
@@ -216,7 +220,7 @@ class BrokerTest extends MesosTestCase {
     broker.options = parseMap("a=1")
 
     broker.failover.registerFailure(new Date())
-    broker.task = new Task("1", "host", 9092)
+    broker.task = new Task("1", "slave", "executor", "host", 9092)
 
     val read: Broker = new Broker()
     read.fromJson(Util.parseJson("" + broker.toJson))
@@ -325,8 +329,9 @@ class BrokerTest extends MesosTestCase {
   // Task
   @Test
   def Task_toJson_fromJson {
-    val task = new Task("id", "host", 9092, parseMap("a=1,b=2"))
+    val task = new Task("id", "slave", "executor", "host", 9092, parseMap("a=1,b=2"))
     task.running = true
+    task.stopping = true
 
     val read: Task = new Task()
     read.fromJson(Util.parseJson("" + task.toJson))
@@ -369,11 +374,15 @@ object BrokerTest {
     if (checkNulls(expected, actual)) return
 
     assertEquals(expected.id, actual.id)
-    assertEquals(expected.running, actual.running)
+    assertEquals(expected.executorId, actual.executorId)
+    assertEquals(expected.slaveId, actual.slaveId)
 
     assertEquals(expected.hostname, actual.hostname)
     assertEquals(expected.port, actual.port)
     assertEquals(expected.attributes, actual.attributes)
+
+    assertEquals(expected.running, actual.running)
+    assertEquals(expected.stopping, actual.stopping)
   }
 
   private def checkNulls(expected: Object, actual: Object): Boolean = {

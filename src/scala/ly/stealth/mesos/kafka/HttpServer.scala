@@ -253,6 +253,8 @@ object HttpServer {
         try { timeout = new Period(request.getParameter("timeout")) }
         catch { case ignore: IllegalArgumentException => response.sendError(400, "invalid timeout"); return }
 
+      val force: Boolean = request.getParameter("force") != null
+
       val idExpr: String = request.getParameter("id")
       if (idExpr == null) { response.sendError(400, "id required"); return }
 
@@ -264,13 +266,14 @@ object HttpServer {
       for (id <- ids) {
         val broker = cluster.getBroker(id)
         if (broker == null) { response.sendError(400, "broker " + id + " not found"); return }
-        if (broker.active == start) { response.sendError(400, "broker " + id + " is" + (if (start) "" else " not") +  " active"); return }
+        if (!force && broker.active == start) { response.sendError(400, "broker " + id + " is" + (if (start) "" else " not") +  " active"); return }
         brokers.add(broker)
       }
 
       for (broker <- brokers) {
         broker.active = start
         broker.failover.resetFailures()
+        if (!start && force) Scheduler.forciblyStopBroker(broker)
       }
       cluster.save()
 

@@ -33,7 +33,6 @@ object Scheduler extends org.apache.mesos.Scheduler {
   cluster.load(clearTasks = true)
 
   private var driver: SchedulerDriver = null
-  private[kafka] val taskIds: util.List[String] = new util.concurrent.CopyOnWriteArrayList[String]()
 
   private[kafka] def newExecutor(broker: Broker): ExecutorInfo = {
     var cmd = "java -cp " + HttpServer.jar.getName
@@ -147,12 +146,11 @@ object Scheduler extends org.apache.mesos.Scheduler {
       if (!started) driver.declineOffer(offer.getId)
     }
 
-    for (id <- taskIds) {
-      val broker = cluster.getBroker(Broker.idFromTaskId(id))
-
-      if (broker == null || broker.shouldStop) {
-        logger.info("Killing task " + id)
-        driver.killTask(TaskID.newBuilder.setValue(id).build)
+    for (broker <- cluster.getBrokers) {
+      if (broker.shouldStop) {
+        logger.info(s"Stopping broker ${broker.id}: killing task ${broker.task.id}")
+        driver.killTask(TaskID.newBuilder.setValue(broker.task.id).build)
+        broker.task.stopping = true
       }
     }
 
@@ -176,23 +174,18 @@ object Scheduler extends org.apache.mesos.Scheduler {
   }
 
   private[kafka] def onBrokerStarted(broker: Broker, status: TaskStatus): Unit = {
-    if (broker == null) return
-
-    if (broker.task != null) broker.task.running = true
+    broker.task.running = true
     broker.failover.resetFailures()
   }
 
   private[kafka] def onBrokerStopped(broker: Broker, status: TaskStatus, now: Date = new Date()): Unit = {
-    taskIds.remove(status.getTaskId.getValue)
-    if (broker == null) return
-
     broker.task = null
-    val failed = status.getState != TaskState.TASK_FINISHED && status.getState != TaskState.TASK_KILLED
+    val failed = broker.active && status.getState != TaskState.TASK_FINISHED && status.getState != TaskState.TASK_KILLED
 
     if (failed) {
       broker.failover.registerFailure(now)
 
-      var msg = "Broker " + broker.id + " failed to start " + broker.failover.failures
+      var msg = s"Broker ${broker.id} failed to start ${broker.failover.failures}"
       if (broker.failover.maxTries != null) msg += "/" + broker.failover.maxTries
 
       if (!broker.failover.isMaxTriesExceeded) {
@@ -217,10 +210,21 @@ object Scheduler extends org.apache.mesos.Scheduler {
       if (attribute.hasText) attributes.put(attribute.getName, attribute.getText.getValue)
 
     driver.launchTasks(util.Arrays.asList(offer.getId), util.Arrays.asList(task_))
-    broker.task = new Broker.Task(id, offer.getHostname, findBrokerPort(offer), attributes)
-    taskIds.add(id)
+    broker.task = new Broker.Task(id, task_.getSlaveId.getValue, task_.getExecutor.getExecutorId.getValue, offer.getHostname, findBrokerPort(offer), attributes)
 
-    logger.info("Launching task " + id + " by offer " + Str.id(offer.getId.getValue) + "\n" + Str.task(task_))
+    logger.info(s"Starting broker ${broker.id}: launching task $id by offer ${Str.id(offer.getId.getValue)}\n ${Str.task(task_)}")
+  }
+
+  def forciblyStopBroker(broker: Broker): Unit = {
+    if (driver != null && broker.task != null) {
+      logger.info(s"Stopping broker ${broker.id} forcibly: sending 'stop' message")
+
+      driver.sendFrameworkMessage(
+        ExecutorID.newBuilder().setValue(broker.task.executorId).build(),
+        SlaveID.newBuilder().setValue(broker.task.slaveId).build(),
+        "stop".getBytes
+      )
+    }
   }
 
   private[kafka] def otherTasksAttributes(name: String): Array[String] = {
