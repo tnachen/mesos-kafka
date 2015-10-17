@@ -51,10 +51,17 @@ object Scheduler extends org.apache.mesos.Scheduler {
       .addUris(CommandInfo.URI.newBuilder().setValue(Config.api + "/kafka/" + HttpServer.kafkaDist.getName))
       .setValue(cmd)
 
+    val dockerBuilder = ContainerInfo.Docker.newBuilder()
+      .setImage("kafka")
+
+    val containerBuilder = ContainerInfo.newBuilder()
+    containerBuilder.setType(ContainerInfo.Type.DOCKER).setDocker(dockerBuilder.build())
+
     ExecutorInfo.newBuilder()
       .setExecutorId(ExecutorID.newBuilder.setValue(Broker.nextExecutorId(broker)))
       .setCommand(commandBuilder)
       .setName("broker-" + broker.id)
+      .setContainer(containerBuilder.build())
       .build()
   }
 
@@ -148,7 +155,7 @@ object Scheduler extends org.apache.mesos.Scheduler {
         if (!declineReason.isEmpty) declineReasons.add(offer.getHostname + Str.id(offer.getId.getValue) + " - " + declineReason)
       }
     }
-    
+
     if (!declineReasons.isEmpty) logger.info("Declined offers:\n" + declineReasons.mkString("\n"))
 
     for (broker <- cluster.getBrokers) {
@@ -379,7 +386,7 @@ object Scheduler extends org.apache.mesos.Scheduler {
     var appender: Appender = null
     if (Config.log == null) appender = new ConsoleAppender(layout)
     else appender = new DailyRollingFileAppender(layout, Config.log.getPath, "'.'yyyy-MM-dd")
-    
+
     root.addAppender(appender)
   }
 }
